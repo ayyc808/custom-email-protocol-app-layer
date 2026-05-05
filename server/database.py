@@ -1,9 +1,6 @@
-#!/usr/bin/env python3
 # Custom Email Protocol - Database Module
 # Handles all database operations for message storage and user management.
 # Uses SQLite with thread-safe operations.
-# Authors: TheTechs - Alvin Cheng, Elijah Canonigo
-# Course: CMPE 148 - Computer Networks I
 
 import sqlite3
 import threading
