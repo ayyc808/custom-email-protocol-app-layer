@@ -1,4 +1,4 @@
-# Custom Email Protocol - Authentication Module
+# Authentication Module
 # Handles password hashing and user authentication.
 
 import bcrypt

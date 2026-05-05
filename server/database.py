@@ -1,4 +1,4 @@
-# Custom Email Protocol - Database Module
+# Database Module
 # Handles all database operations for message storage and user management.
 # Uses SQLite with thread-safe operations.
 
