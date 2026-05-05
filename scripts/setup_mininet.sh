@@ -66,6 +66,58 @@ CLIENT_DIR = os.path.join(PROJECT_DIR, 'client')
 RESULTS_DIR = os.path.join(PROJECT_DIR, 'mininet_results')
 
 
+def write_send_script(client_dir, server_ip, index):
+    # Write alice send script to temp file to avoid f-string quoting issues
+    with open('/tmp/send_client.py', 'w') as f:
+        f.write(f"""
+import sys
+sys.path.insert(0, '{client_dir}')
+from utils import connect_to_server, send_command
+try:
+    s = connect_to_server('{server_ip}', 5000, timeout=15)
+    s.recv(4096)
+    send_command(s, 'HELLO alice')
+    send_command(s, 'AUTH pass123')
+    r = send_command(s, 'SEND bob Subject{index} Body of message {index}')
+    print(r)
+    send_command(s, 'QUIT')
+    s.close()
+except Exception as e:
+    print('ERROR', e)
+""")
+
+
+def write_retrieve_script(client_dir, server_ip):
+    # Write bob retrieve script to temp file to avoid f-string quoting issues
+    with open('/tmp/retrieve_client.py', 'w') as f:
+        f.write(f"""
+import sys
+sys.path.insert(0, '{client_dir}')
+from utils import connect_to_server, send_command
+try:
+    s = connect_to_server('{server_ip}', 5000, timeout=15)
+    s.recv(4096)
+    send_command(s, 'HELLO bob')
+    send_command(s, 'AUTH pass456')
+    list_resp = send_command(s, 'LIST')
+    lines = list_resp.split()
+    msg_id = None
+    for word in lines:
+        if word.startswith('ID:'):
+            msg_id = word.replace('ID:', '')
+            break
+    if msg_id:
+        r = send_command(s, f'RETRIEVE {{msg_id}}')
+        print(r)
+    else:
+        print('NO_MESSAGES')
+    send_command(s, 'QUIT')
+    s.close()
+except Exception as e:
+    print('ERROR', e)
+""")
+
+
 def run_test(delay_ms, loss_pct, label):
     print(f"\n--- Condition: {label} (delay={delay_ms}ms, loss={loss_pct}%) ---")
 
@@ -105,22 +157,9 @@ def run_test(delay_ms, loss_pct, label):
         # ---- ALICE SENDS ----
         send_start = time.time()
 
-        send_result = h2.cmd(f'python3 -c "
-import sys
-sys.path.insert(0, \\"{CLIENT_DIR}\\")
-from utils import connect_to_server, send_command
-try:
-    s = connect_to_server(\\"{server_ip}\\", 5000, timeout=15)
-    s.recv(4096)
-    send_command(s, \\"HELLO alice\\")
-    send_command(s, \\"AUTH pass123\\")
-    r = send_command(s, \\"SEND bob Subject{i} Body of message {i}\\")
-    print(r)
-    send_command(s, \\"QUIT\\")
-    s.close()
-except Exception as e:
-    print(\\"ERROR\\", e)
-"')
+        # Write send script to temp file and run it
+        write_send_script(CLIENT_DIR, server_ip, i)
+        send_result = h2.cmd('python3 /tmp/send_client.py')
 
         send_end = time.time()
         send_latency = round((send_end - send_start) * 1000, 2)
@@ -135,32 +174,9 @@ except Exception as e:
         # ---- BOB RETRIEVES ----
         retrieve_start = time.time()
 
-        retrieve_result = h2.cmd(f'python3 -c "
-import sys
-sys.path.insert(0, \\"{CLIENT_DIR}\\")
-from utils import connect_to_server, send_command
-try:
-    s = connect_to_server(\\"{server_ip}\\", 5000, timeout=15)
-    s.recv(4096)
-    send_command(s, \\"HELLO bob\\")
-    send_command(s, \\"AUTH pass456\\")
-    list_resp = send_command(s, \\"LIST\\")
-    lines = list_resp.split()
-    msg_id = None
-    for j, word in enumerate(lines):
-        if word.startswith(\\"ID:\\"):
-            msg_id = word.replace(\\"ID:\\", \\"\\")
-            break
-    if msg_id:
-        r = send_command(s, f\\"RETRIEVE {msg_id}\\")
-        print(r)
-    else:
-        print(\\"NO_MESSAGES\\")
-    send_command(s, \\"QUIT\\")
-    s.close()
-except Exception as e:
-    print(\\"ERROR\\", e)
-"')
+        # Write retrieve script to temp file and run it
+        write_retrieve_script(CLIENT_DIR, server_ip)
+        retrieve_result = h2.cmd('python3 /tmp/retrieve_client.py')
 
         retrieve_end = time.time()
         retrieve_latency = round((retrieve_end - retrieve_start) * 1000, 2)
