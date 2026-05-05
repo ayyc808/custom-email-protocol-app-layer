@@ -47,7 +47,8 @@ MININET_SCRIPT="$PROJECT_DIR/scripts/run_mininet_test.py"
 
 cat > "$MININET_SCRIPT" << PYEOF
 # Mininet Test Runner
-# Runs server and client on emulated hosts under different network conditions.
+# Tests full round trip: alice sends, bob retrieves
+# under 4 different network conditions.
 
 import sys
 import os
@@ -91,16 +92,21 @@ def run_test(delay_ms, loss_pct, label):
     h1.cmd(f'cd {SERVER_DIR} && python3 server.py &')
     time.sleep(2)
 
-    successes = 0
-    failures = 0
-    latencies = []
+    send_latencies = []
+    retrieve_latencies = []
+    roundtrip_latencies = []
+    send_failures = 0
+    retrieve_failures = 0
 
-    # Run 10 client sessions
+    # Run 10 round trip tests
     for i in range(10):
-        start = time.time()
+        print(f"  Round {i+1}/10...")
 
-        result = h2.cmd(f'python3 -c "
-import sys, socket, time
+        # ---- ALICE SENDS ----
+        send_start = time.time()
+
+        send_result = h2.cmd(f'python3 -c "
+import sys
 sys.path.insert(0, \\"{CLIENT_DIR}\\")
 from utils import connect_to_server, send_command
 try:
@@ -108,7 +114,7 @@ try:
     s.recv(4096)
     send_command(s, \\"HELLO alice\\")
     send_command(s, \\"AUTH pass123\\")
-    r = send_command(s, \\"SEND bob Subject Body\\")
+    r = send_command(s, \\"SEND bob Subject{i} Body of message {i}\\")
     print(r)
     send_command(s, \\"QUIT\\")
     s.close()
@@ -116,35 +122,94 @@ except Exception as e:
     print(\\"ERROR\\", e)
 "')
 
-        end = time.time()
-        latency_ms = round((end - start) * 1000, 2)
+        send_end = time.time()
+        send_latency = round((send_end - send_start) * 1000, 2)
 
-        if '201' in result:
-            successes += 1
-            latencies.append(latency_ms)
+        if '201' in send_result:
+            send_latencies.append(send_latency)
         else:
-            failures += 1
+            send_failures += 1
+            print(f"    Send failed: {send_result.strip()}")
+            continue
+
+        # ---- BOB RETRIEVES ----
+        retrieve_start = time.time()
+
+        retrieve_result = h2.cmd(f'python3 -c "
+import sys
+sys.path.insert(0, \\"{CLIENT_DIR}\\")
+from utils import connect_to_server, send_command
+try:
+    s = connect_to_server(\\"{server_ip}\\", 5000, timeout=15)
+    s.recv(4096)
+    send_command(s, \\"HELLO bob\\")
+    send_command(s, \\"AUTH pass456\\")
+    list_resp = send_command(s, \\"LIST\\")
+    lines = list_resp.split()
+    msg_id = None
+    for j, word in enumerate(lines):
+        if word.startswith(\\"ID:\\"):
+            msg_id = word.replace(\\"ID:\\", \\"\\")
+            break
+    if msg_id:
+        r = send_command(s, f\\"RETRIEVE {msg_id}\\")
+        print(r)
+    else:
+        print(\\"NO_MESSAGES\\")
+    send_command(s, \\"QUIT\\")
+    s.close()
+except Exception as e:
+    print(\\"ERROR\\", e)
+"')
+
+        retrieve_end = time.time()
+        retrieve_latency = round((retrieve_end - retrieve_start) * 1000, 2)
+
+        if '202' in retrieve_result:
+            retrieve_latencies.append(retrieve_latency)
+            roundtrip = round(send_latency + retrieve_latency, 2)
+            roundtrip_latencies.append(roundtrip)
+        else:
+            retrieve_failures += 1
+            print(f"    Retrieve failed: {retrieve_result.strip()}")
 
     # Calculate metrics
-    avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else 0
-    failure_rate = round((failures / 10) * 100, 1)
-    throughput = round(successes / max(sum(latencies) / 1000, 0.001), 2)
+    total = 10
+    avg_send = round(sum(send_latencies) / len(send_latencies), 2) if send_latencies else 0
+    avg_retrieve = round(sum(retrieve_latencies) / len(retrieve_latencies), 2) if retrieve_latencies else 0
+    avg_roundtrip = round(sum(roundtrip_latencies) / len(roundtrip_latencies), 2) if roundtrip_latencies else 0
+    send_failure_rate = round((send_failures / total) * 100, 1)
+    retrieve_failure_rate = round((retrieve_failures / total) * 100, 1)
+    throughput = round(len(send_latencies) / max(sum(send_latencies) / 1000, 0.001), 2)
 
-    print(f"  Successes:    {successes}/10")
-    print(f"  Failures:     {failures}/10")
-    print(f"  Failure rate: {failure_rate}%")
-    print(f"  Avg latency:  {avg_latency} ms")
-    print(f"  Throughput:   {throughput} msg/sec")
+    print(f"\n  --- Results for {label} ---")
+    print(f"  Send successes:       {len(send_latencies)}/10")
+    print(f"  Send failures:        {send_failures}/10")
+    print(f"  Send failure rate:    {send_failure_rate}%")
+    print(f"  Avg send latency:     {avg_send} ms")
+    print()
+    print(f"  Retrieve successes:   {len(retrieve_latencies)}/10")
+    print(f"  Retrieve failures:    {retrieve_failures}/10")
+    print(f"  Retrieve failure rate:{retrieve_failure_rate}%")
+    print(f"  Avg retrieve latency: {avg_retrieve} ms")
+    print()
+    print(f"  Avg round trip:       {avg_roundtrip} ms")
+    print(f"  Throughput:           {throughput} msg/sec")
 
     # Save results to JSON
     results = {
         'condition': label,
         'delay_ms': delay_ms,
         'loss_pct': loss_pct,
-        'successes': successes,
-        'failures': failures,
-        'failure_rate': failure_rate,
-        'avg_latency': avg_latency,
+        'send_successes': len(send_latencies),
+        'send_failures': send_failures,
+        'send_failure_rate': send_failure_rate,
+        'avg_send_latency': avg_send,
+        'retrieve_successes': len(retrieve_latencies),
+        'retrieve_failures': retrieve_failures,
+        'retrieve_failure_rate': retrieve_failure_rate,
+        'avg_retrieve_latency': avg_retrieve,
+        'avg_roundtrip': avg_roundtrip,
         'throughput': throughput
     }
 
@@ -176,19 +241,20 @@ def main():
         result = run_test(delay, loss, label)
         all_results.append(result)
 
-    # Print summary table
-    print("\n" + "=" * 60)
-    print("   Results Summary")
-    print("=" * 60)
-    print(f"{'Condition':<12} {'Delay':<10} {'Loss':<8} {'Fail%':<8} {'Avg ms':<12} {'msg/sec'}")
-    print("-" * 60)
+    # Print full summary table
+    print("\n" + "=" * 70)
+    print("   Full Round Trip Results Summary")
+    print("=" * 70)
+    print(f"{'Condition':<12} {'Delay':<8} {'Loss':<6} {'Send ms':<10} {'Recv ms':<10} {'RT ms':<10} {'msg/sec'}")
+    print("-" * 70)
     for r in all_results:
         print(
             f"{r['condition']:<12} "
-            f"{str(r['delay_ms'])+'ms':<10} "
-            f"{str(r['loss_pct'])+'%':<8} "
-            f"{str(r['failure_rate'])+'%':<8} "
-            f"{r['avg_latency']:<12} "
+            f"{str(r['delay_ms'])+'ms':<8} "
+            f"{str(r['loss_pct'])+'%':<6} "
+            f"{r['avg_send_latency']:<10} "
+            f"{r['avg_retrieve_latency']:<10} "
+            f"{r['avg_roundtrip']:<10} "
             f"{r['throughput']}"
         )
 
@@ -214,6 +280,6 @@ sudo python3 "$MININET_SCRIPT"
 
 echo ""
 echo "=================================================="
-echo "Tests complete. Results saved in: $RESULTS_DIR"
+echo "Tests complete. Results will get saved in: $RESULTS_DIR"
 echo "Then stop Wireshark capture and save the .pcapng file"
 echo "=================================================="
