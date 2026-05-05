@@ -20,3 +20,6 @@ venv/
 # Temporary test files
 test_*.py
 run_test.py
+
+# Mininet results
+mininet_results/
