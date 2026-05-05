@@ -67,8 +67,9 @@ RESULTS_DIR = os.path.join(PROJECT_DIR, 'mininet_results')
 
 
 def write_send_script(client_dir, server_ip, index):
-    # Write alice send script to temp file to avoid f-string quoting issues
-    with open('/tmp/send_client.py', 'w') as f:
+    # Write alice send script to results dir (accessible inside Mininet)
+    script_path = os.path.join(RESULTS_DIR, 'send_client.py')
+    with open(script_path, 'w') as f:
         f.write(f"""
 import sys
 sys.path.insert(0, '{client_dir}')
@@ -85,11 +86,13 @@ try:
 except Exception as e:
     print('ERROR', e)
 """)
+    return script_path
 
 
 def write_retrieve_script(client_dir, server_ip):
-    # Write bob retrieve script to temp file to avoid f-string quoting issues
-    with open('/tmp/retrieve_client.py', 'w') as f:
+    # Write bob retrieve script to results dir (accessible inside Mininet)
+    script_path = os.path.join(RESULTS_DIR, 'retrieve_client.py')
+    with open(script_path, 'w') as f:
         f.write(f"""
 import sys
 sys.path.insert(0, '{client_dir}')
@@ -116,6 +119,7 @@ try:
 except Exception as e:
     print('ERROR', e)
 """)
+    return script_path
 
 
 def run_test(delay_ms, loss_pct, label):
@@ -142,7 +146,17 @@ def run_test(delay_ms, loss_pct, label):
 
     # Start fresh server on h1
     h1.cmd(f'cd {SERVER_DIR} && python3 server.py &')
-    time.sleep(2)
+    time.sleep(4)
+
+    # Verify connectivity before running tests
+    ping_result = h2.cmd(f'ping -c 1 -W 2 {server_ip}')
+    if '1 received' not in ping_result:
+        print(f"  WARNING: h2 cannot reach h1 at {server_ip}")
+        print(f"  Ping result: {ping_result.strip()}")
+        net.stop()
+        return None
+
+    print(f"  Connectivity verified: h2 can reach h1 at {server_ip}")
 
     send_latencies = []
     retrieve_latencies = []
@@ -157,9 +171,9 @@ def run_test(delay_ms, loss_pct, label):
         # ---- ALICE SENDS ----
         send_start = time.time()
 
-        # Write send script to temp file and run it
-        write_send_script(CLIENT_DIR, server_ip, i)
-        send_result = h2.cmd('python3 /tmp/send_client.py')
+        # Write send script to results dir and run it
+        send_script = write_send_script(CLIENT_DIR, server_ip, i)
+        send_result = h2.cmd(f'python3 {send_script}')
 
         send_end = time.time()
         send_latency = round((send_end - send_start) * 1000, 2)
@@ -174,9 +188,9 @@ def run_test(delay_ms, loss_pct, label):
         # ---- BOB RETRIEVES ----
         retrieve_start = time.time()
 
-        # Write retrieve script to temp file and run it
-        write_retrieve_script(CLIENT_DIR, server_ip)
-        retrieve_result = h2.cmd('python3 /tmp/retrieve_client.py')
+        # Write retrieve script to results dir and run it
+        retrieve_script = write_retrieve_script(CLIENT_DIR, server_ip)
+        retrieve_result = h2.cmd(f'python3 {retrieve_script}')
 
         retrieve_end = time.time()
         retrieve_latency = round((retrieve_end - retrieve_start) * 1000, 2)
@@ -255,7 +269,12 @@ def main():
     all_results = []
     for delay, loss, label in conditions:
         result = run_test(delay, loss, label)
-        all_results.append(result)
+        if result:
+            all_results.append(result)
+
+    if not all_results:
+        print("No results collected. Check connectivity issues above.")
+        return
 
     # Print full summary table
     print("\n" + "=" * 70)
@@ -292,6 +311,7 @@ echo "      with filter: tcp port 5000"
 echo ""
 read -p "Press Enter when Wireshark is capturing..."
 
+sudo mn -c > /dev/null 2>&1
 sudo python3 "$MININET_SCRIPT"
 
 echo ""
