@@ -125,7 +125,8 @@ except Exception as e:
 def run_test(delay_ms, loss_pct, label):
     print(f"\n--- Condition: {label} (delay={delay_ms}ms, loss={loss_pct}%) ---")
 
-    net = Mininet(link=TCLink)
+    from mininet.node import Controller, OVSSwitch
+    net = Mininet(link=TCLink, controller=Controller, switch=OVSSwitch)
 
     # h1 = server host, h2 = client host
     h1 = net.addHost('h1')
