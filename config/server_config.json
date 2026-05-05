@@ -1,0 +1,20 @@
+{
+    "server": {
+      "host": "localhost",
+      "port": 5000,
+      "max_connections": 50,
+      "timeout": 300
+    },
+    "database": {
+      "path": "email_server.db"
+    },
+    "security": {
+      "enable_tls": false,
+      "tls_cert": "",
+      "tls_key": ""
+    },
+    "logging": {
+      "level": "INFO",
+      "file": "server.log"
+    }
+  }
