@@ -16,3 +16,7 @@ venv/
 
 # OS
 .DS_Store
+
+# Temporary test files
+test_*.py
+run_test.py
